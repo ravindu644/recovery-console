@@ -1,0 +1,14 @@
+prefix=/mnt/rec/deps/armhf
+exec_prefix=/mnt/rec/deps/armhf
+libdir=/mnt/rec/deps/armhf/lib
+includedir=/mnt/rec/deps/armhf/include
+
+Name: FreeType 2
+URL: https://freetype.org
+Description: A free, high-quality, and portable font engine.
+Version: 26.2.20
+Requires: 
+Requires.private: 
+Libs: -L/mnt/rec/deps/armhf/lib -lfreetype 
+Libs.private: 
+Cflags: -I${includedir}/freetype2
