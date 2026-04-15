@@ -1,0 +1,14 @@
+prefix=/mnt/rec/deps/x86
+exec_prefix=/mnt/rec/deps/x86
+libdir=/mnt/rec/deps/x86/lib
+includedir=/mnt/rec/deps/x86/include
+
+Name: FreeType 2
+URL: https://freetype.org
+Description: A free, high-quality, and portable font engine.
+Version: 26.2.20
+Requires: 
+Requires.private: 
+Libs: -L/mnt/rec/deps/x86/lib -lfreetype 
+Libs.private: 
+Cflags: -I${includedir}/freetype2

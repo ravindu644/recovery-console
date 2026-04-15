@@ -1,0 +1,14 @@
+prefix=/mnt/rec/deps/aarch64
+exec_prefix=/mnt/rec/deps/aarch64
+libdir=/mnt/rec/deps/aarch64/lib
+includedir=/mnt/rec/deps/aarch64/include
+
+Name: FreeType 2
+URL: https://freetype.org
+Description: A free, high-quality, and portable font engine.
+Version: 26.2.20
+Requires: 
+Requires.private: 
+Libs: -L/mnt/rec/deps/aarch64/lib -lfreetype 
+Libs.private: 
+Cflags: -I${includedir}/freetype2
