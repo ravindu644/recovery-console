@@ -8,3 +8,7 @@ CompileFlags:
     - "-std=gnu99"
     - "-Wall"
     - "-Wextra"
+    - "-xc"
+Diagnostics:
+  Suppress:
+    - "unused-includes"
