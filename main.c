@@ -209,7 +209,8 @@ int main(int argc, char **argv) {
       ssize_t n = read(pty_fd, b, sizeof(b));
       if (n > 0) {
         term_write(&term, b, (int)n);
-        display_render(&disp, &term);
+        if (!is_blanked)
+          display_render(&disp, &term);
         if (is_service)
           (void)write(STDOUT_FILENO, b, (size_t)n);
         if (cli_fd >= 0)

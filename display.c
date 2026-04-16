@@ -109,6 +109,8 @@ resolve_color(uint32_t c) {
 static const int braille_map[2][4] = {{0, 1, 2, 6}, {3, 4, 5, 7}};
 
 void display_render(DisplayDev *d, Term *t) {
+  if (!g_fb)
+    return;
   bool any = t->screen_dirty;
   t->screen_dirty = false;
   const int bl = font_baseline();
