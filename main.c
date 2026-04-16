@@ -99,14 +99,28 @@ static pid_t spawn_shell(int *pty_fd, int cols, int rows, const char *cmd) {
 
 int main(int argc, char **argv) {
   char *exec_cmd = NULL;
-  bool is_service = isatty(STDIN_FILENO);
+  bool do_daemon = false;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--attach") == 0)
       return do_attach();
+    if (strcmp(argv[i], "--daemon") == 0)
+      do_daemon = true;
     if (strcmp(argv[i], "--exec") == 0 && i + 1 < argc)
       exec_cmd = argv[++i];
   }
 
+  if (do_daemon) {
+    /* Immortal mode: ignore signals that would kill us on unplug/logout */
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
+    if (daemon(1, 0) < 0) {
+      perror("daemon");
+      return 1;
+    }
+  }
+
+  bool is_service = !do_daemon && isatty(STDIN_FILENO);
   DisplayDev disp = {0};
   Term term = {0};
   InputDev in = {0};
@@ -121,8 +135,18 @@ int main(int argc, char **argv) {
 
   struct sigaction sa = {.sa_handler = on_sig};
   sigaction(SIGCHLD, &sa, NULL);
-  sigaction(SIGINT, &sa, NULL);
-  sigaction(SIGTERM, &sa, NULL);
+
+  if (do_daemon) {
+    /* Daemon: Ignore everything except SIGKILL */
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
+  } else {
+    /* Foreground: Ignore INT/TERM so they pass to shell, but handle HUP */
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
+    sigaction(SIGHUP, &sa, NULL);
+  }
   signal(SIGPIPE, SIG_IGN);
 
   unlink(SOCKET_PATH);
