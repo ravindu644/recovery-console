@@ -1,0 +1,10 @@
+CompileFlags:
+  Add:
+    - "-Iinclude"
+    - "-I."
+    - "-Ideps/aarch64/include/freetype2"
+    - "-Ideps/aarch64/include"
+    - "-DHAVE_EMBEDDED_FONT"
+    - "-std=gnu99"
+    - "-Wall"
+    - "-Wextra"

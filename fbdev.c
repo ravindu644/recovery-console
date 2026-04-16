@@ -3,7 +3,6 @@
 #include "display.h"
 #include <fcntl.h>
 #include <linux/fb.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
