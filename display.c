@@ -3,6 +3,7 @@
 #include "config.h"
 #include "font.h"
 #include <fcntl.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -266,13 +267,14 @@ void display_render(DisplayDev *d, Term *t) {
     any = true;
   }
 
-  /* Cursor */
-  if (t->cursor_visible && t->cy < t->rows) {
+  /* Cursor: draw a white box outline around the current cell */
+  if (t->cursor_visible && t->cy >= 0 && t->cy < t->rows && t->cx >= 0 &&
+      t->cx < t->cols) {
     int x0 = t->cx * cw + MARGIN_LEFT;
     int y0 = t->cy * ch + MARGIN_TOP;
     uint32_t clr = palette[CURSOR_COLOR];
-    hfill(x0, y0 + ch - 2, cw, clr);
-    hfill(x0, y0 + ch - 1, cw, clr);
+    for (int y = 0; y < ch; y++)
+      hfill(x0, y0 + y, cw, clr);
   }
 
   if (any)
@@ -280,8 +282,25 @@ void display_render(DisplayDev *d, Term *t) {
 }
 
 void display_blank(DisplayDev *d, bool blank) {
-  (void)d;
-  (void)blank;
+  if (d->is_drm) {
+    /* DRM: clear framebuffer to black */
+    if (g_fb && d->buf.size > 0)
+      memset(g_fb, blank ? 0 : 0, d->buf.size); /* clear on blank */
+    (void)blank;
+  } else {
+    /* fbdev: write to sysfs blank node */
+    const char *nodes[] = {
+        "/sys/class/graphics/fb0/blank",
+        "/sys/class/graphics/fb1/blank",
+    };
+    for (int i = 0; i < 2; i++) {
+      int fd = open(nodes[i], O_WRONLY);
+      if (fd < 0)
+        continue;
+      (void)write(fd, blank ? "1\n" : "0\n", 2);
+      close(fd);
+    }
+  }
 }
 
 void display_kick(DisplayDev *d) {

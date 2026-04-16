@@ -13,6 +13,7 @@
 
 typedef struct {
   uint32_t cp;
+  uint32_t gen; /* generation counter for eviction ordering */
   bool used;
   Glyph g;
 } Slot;
@@ -22,6 +23,8 @@ static FT_Face g_face;
 static int g_cell_w, g_cell_h, g_baseline;
 static Slot g_cache[CACHE_SZ];
 static unsigned g_used;
+static uint32_t g_gen;
+static Glyph g_fallback = {.adv = 0, .px = NULL};
 
 /* Multiplicative Fibonacci hash */
 static uint32_t cp_hash(uint32_t cp) {
@@ -86,13 +89,18 @@ void font_free(void) {
       g_cache[i].used = false;
     }
   }
-  if (g_face)
+  free(g_fallback.px);
+  g_fallback.px = NULL;
+  if (g_face) {
     FT_Done_Face(g_face);
-  if (g_ft)
+    g_face = NULL;
+  }
+  if (g_ft) {
     FT_Done_FreeType(g_ft);
-  g_face = NULL;
-  g_ft = NULL;
+    g_ft = NULL;
+  }
   g_used = 0;
+  g_gen = 0;
 }
 
 static Glyph *cache_get(uint32_t cp) {
@@ -101,18 +109,26 @@ static Glyph *cache_get(uint32_t cp) {
     uint32_t idx = (h + i) & CACHE_MASK;
     if (!g_cache[idx].used)
       return NULL;
-    if (g_cache[idx].cp == cp)
+    if (g_cache[idx].cp == cp) {
+      g_cache[idx].gen = ++g_gen;
       return &g_cache[idx].g;
+    }
   }
   return NULL;
 }
 
 static Glyph *cache_alloc(uint32_t cp) {
-  /* Evict half on high load to avoid full-cache re-rasterization */
+  /* Evict oldest quarter on high load */
   if (g_used >= (CACHE_SZ * 3 / 4)) {
+    /* Find generation threshold: evict slots older than median gen */
+    uint32_t oldest = g_gen;
+    for (int i = 0; i < CACHE_SZ; i++)
+      if (g_cache[i].used && g_cache[i].gen < oldest)
+        oldest = g_cache[i].gen;
+    uint32_t threshold = oldest + (g_gen - oldest) / 2;
     int evicted = 0;
-    for (int i = 0; i < CACHE_SZ && evicted < (int)g_used / 2; i++) {
-      if (g_cache[i].used) {
+    for (int i = 0; i < CACHE_SZ && evicted < (int)g_used / 4; i++) {
+      if (g_cache[i].used && g_cache[i].gen <= threshold) {
         free(g_cache[i].g.px);
         g_cache[i].used = false;
         evicted++;
@@ -125,6 +141,7 @@ static Glyph *cache_alloc(uint32_t cp) {
     uint32_t idx = (h + i) & CACHE_MASK;
     if (!g_cache[idx].used) {
       g_cache[idx].cp = cp;
+      g_cache[idx].gen = ++g_gen;
       g_cache[idx].used = true;
       g_used++;
       return &g_cache[idx].g;
@@ -134,8 +151,6 @@ static Glyph *cache_alloc(uint32_t cp) {
 }
 
 /* Build a visible "tofu" replacement glyph (a small box outline) */
-static uint8_t g_tofu_px[1]; /* placeholder, real buffer built in init */
-static Glyph g_fallback = {.adv = 0, .px = NULL};
 
 static void build_tofu(void) {
   int w = g_cell_w > 2 ? g_cell_w - 2 : 1;
@@ -158,7 +173,6 @@ static void build_tofu(void) {
   g_fallback.by = g_baseline - 2;
   g_fallback.adv = g_cell_w;
   g_fallback.px = px;
-  (void)g_tofu_px;
 }
 
 const Glyph *font_glyph(uint32_t cp) {

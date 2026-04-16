@@ -46,7 +46,8 @@ bool fbdev_init(DisplayDev *d) {
   }
 
   d->is_drm = false;
-  memset(d->buf.map, 0, d->buf.size);
+  if (d->buf.size > 0)
+    memset(d->buf.map, 0, d->buf.size);
   return true;
 }
 

@@ -49,10 +49,15 @@ static void stdin_restore(void) {
 
 static int do_attach(void) {
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0) {
+    perror("socket");
+    return 1;
+  }
   struct sockaddr_un addr = {.sun_family = AF_UNIX};
   strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
   if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
     perror("connect");
+    close(fd);
     return 1;
   }
   stdin_raw();
@@ -86,6 +91,10 @@ static pid_t spawn_shell(int *pty_fd, int cols, int rows, const char *cmd) {
   struct winsize ws = {.ws_row = (unsigned short)rows,
                        .ws_col = (unsigned short)cols};
   pid_t pid = forkpty(pty_fd, NULL, NULL, &ws);
+  if (pid < 0) {
+    perror("forkpty");
+    return -1;
+  }
   if (pid == 0) {
     setenv("TERM", TERM_ENV, 1);
     if (cmd)
@@ -167,6 +176,12 @@ int main(int argc, char **argv) {
     LOG("starting service (no tty)");
 
   pid_t child = spawn_shell(&pty_fd, term.cols, term.rows, exec_cmd);
+  if (child < 0) {
+    display_free(&disp);
+    input_free(&in);
+    term_free(&term);
+    return 1;
+  }
   /* Non-blocking PTY enables I/O coalescing drain loop */
   fcntl(pty_fd, F_SETFL, fcntl(pty_fd, F_GETFL, 0) | O_NONBLOCK);
 
@@ -272,8 +287,10 @@ int main(int argc, char **argv) {
   }
 
 pty_dead:
-  if (child > 0)
+  if (child > 0) {
     kill(child, SIGTERM);
+    waitpid(child, NULL, 0);
+  }
   display_blank(&disp, true);
   stdin_restore();
   input_free(&in);

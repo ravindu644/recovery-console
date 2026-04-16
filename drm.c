@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 bool drm_init_dev(DisplayDev *d) {
+  d->fd = -1;
   if ((d->fd = open(DRM_DEVICE, O_RDWR | O_CLOEXEC)) < 0)
     return false;
 
@@ -22,16 +23,26 @@ bool drm_init_dev(DisplayDev *d) {
 
   struct drm_mode_card_res res = {0};
   if (ioctl(d->fd, DRM_IOCTL_MODE_GETRESOURCES, &res) < 0)
-    return false;
+    goto fail_fd;
 
-  uint32_t *crtcs = calloc(res.count_crtcs, 4);
-  uint32_t *conns = calloc(res.count_connectors, 4);
-  uint32_t *encs = calloc(res.count_encoders, 4);
+  uint32_t *crtcs = calloc(res.count_crtcs, sizeof(uint32_t));
+  uint32_t *conns = calloc(res.count_connectors, sizeof(uint32_t));
+  uint32_t *encs = calloc(res.count_encoders, sizeof(uint32_t));
+  if (!crtcs || !conns || !encs) {
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
   res.crtc_id_ptr = (uintptr_t)crtcs;
   res.connector_id_ptr = (uintptr_t)conns;
   res.encoder_id_ptr = (uintptr_t)encs;
-  if (ioctl(d->fd, DRM_IOCTL_MODE_GETRESOURCES, &res) < 0)
-    return false;
+  if (ioctl(d->fd, DRM_IOCTL_MODE_GETRESOURCES, &res) < 0) {
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
 
   /* Pick best connected connector (prefer DSI/eDP for mobile) */
   uint32_t best_c = DRM_CONN_ID, used_crtc = DRM_CRTC_ID;
@@ -51,18 +62,40 @@ bool drm_init_dev(DisplayDev *d) {
       }
     }
   }
-  if (!best_c)
-    return false;
+  if (!best_c) {
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
 
   d->is_drm = true;
   struct drm_mode_get_connector con = {.connector_id = best_c};
   ioctl(d->fd, DRM_IOCTL_MODE_GETCONNECTOR, &con);
   uint32_t sv_enc = con.encoder_id;
 
+  if (con.count_modes == 0) {
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
   struct drm_mode_modeinfo *ms = calloc(con.count_modes, sizeof(*ms));
+  if (!ms) {
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
   con.modes_ptr = (uintptr_t)ms;
   con.count_props = con.count_encoders = 0;
-  ioctl(d->fd, DRM_IOCTL_MODE_GETCONNECTOR, &con);
+  if (ioctl(d->fd, DRM_IOCTL_MODE_GETCONNECTOR, &con) < 0) {
+    free(ms);
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
 
   int midx = 0;
   for (uint32_t i = 0; i < con.count_modes; i++)
@@ -84,7 +117,13 @@ bool drm_init_dev(DisplayDev *d) {
 
   struct drm_mode_create_dumb cr = {
       .width = (uint32_t)d->width, .height = (uint32_t)d->height, .bpp = 32};
-  ioctl(d->fd, DRM_IOCTL_MODE_CREATE_DUMB, &cr);
+  if (ioctl(d->fd, DRM_IOCTL_MODE_CREATE_DUMB, &cr) < 0) {
+    free(ms);
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
   d->buf.handle = cr.handle;
   d->buf.pitch = cr.pitch;
   d->buf.size = cr.size;
@@ -95,13 +134,33 @@ bool drm_init_dev(DisplayDev *d) {
                                .bpp = 32,
                                .depth = 24,
                                .handle = d->buf.handle};
-  ioctl(d->fd, DRM_IOCTL_MODE_ADDFB, &fb);
+  if (ioctl(d->fd, DRM_IOCTL_MODE_ADDFB, &fb) < 0) {
+    free(ms);
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
   d->buf.fb_id = fb.fb_id;
 
   struct drm_mode_map_dumb mq = {.handle = d->buf.handle};
-  ioctl(d->fd, DRM_IOCTL_MODE_MAP_DUMB, &mq);
+  if (ioctl(d->fd, DRM_IOCTL_MODE_MAP_DUMB, &mq) < 0) {
+    free(ms);
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
   d->buf.map = mmap(NULL, d->buf.size, PROT_READ | PROT_WRITE, MAP_SHARED,
                     d->fd, (off_t)mq.offset);
+  if (d->buf.map == MAP_FAILED) {
+    d->buf.map = NULL;
+    free(ms);
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
   memset(d->buf.map, 0, d->buf.size);
 
   ioctl(d->fd, 0x0000641E /* DRM_IOCTL_SET_MASTER */, 0);
@@ -111,13 +170,26 @@ bool drm_init_dev(DisplayDev *d) {
                              .count_connectors = 1,
                              .mode_valid = 1,
                              .mode = ms[midx]};
-  ioctl(d->fd, DRM_IOCTL_MODE_SETCRTC, &cc);
+  if (ioctl(d->fd, DRM_IOCTL_MODE_SETCRTC, &cc) < 0) {
+    munmap(d->buf.map, d->buf.size);
+    d->buf.map = NULL;
+    free(ms);
+    free(crtcs);
+    free(conns);
+    free(encs);
+    goto fail_fd;
+  }
 
   free(ms);
   free(crtcs);
   free(conns);
   free(encs);
   return true;
+
+fail_fd:
+  close(d->fd);
+  d->fd = -1;
+  return false;
 }
 
 void drm_free_dev(DisplayDev *d) {

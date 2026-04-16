@@ -113,8 +113,15 @@ void term_init(Term *t, int px_w, int px_h, int cell_w, int cell_h) {
   t->dirty = calloc((size_t)t->rows, sizeof(bool));
   t->utf8_code = 0;
   t->utf8_expect = 0;
-  if (!t->cells || !t->cells_alt || !t->dirty)
-    exit(1);
+  if (!t->cells || !t->cells_alt || !t->dirty) {
+    free(t->cells);
+    free(t->cells_alt);
+    free(t->dirty);
+    t->cells = t->cells_alt = NULL;
+    t->dirty = NULL;
+    LOG("term_init: out of memory");
+    return;
+  }
   for (int r = 0; r < t->total_rows; r++)
     row_clear(t, r, 0, t->cols - 1);
 }
