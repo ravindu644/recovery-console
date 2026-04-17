@@ -76,20 +76,35 @@ static void input_add_device(InputDev *in, const char *path) {
 
   char devname[64] = "<unknown>";
   ioctl(fd, EVIOCGNAME(sizeof(devname)), devname);
-  fprintf(stderr, "[INPUT] opened %s (%s) as fd=%d\n", path, devname, fd);
 
   in->fds[in->count] = fd;
   snprintf(in->devnames[in->count], sizeof(in->devnames[0]), "%s", devname);
+  const char *slash = strrchr(path, '/');
+  snprintf(in->nodenames[in->count], sizeof(in->nodenames[0]), "%s",
+           slash ? slash + 1 : path);
   in->count++;
 }
 
-bool input_init(InputDev *in) {
-  in->count = 0;
-  in->shift = false;
-  in->ctrl = false;
-  in->alt = false;
-  in->capslock = false;
+void input_remove_device(InputDev *in, int index) {
+  if (!in || index < 0 || index >= in->count)
+    return;
+  close(in->fds[index]);
+  if (index < in->count - 1) {
+    int n = in->count - index - 1;
+    memmove(&in->fds[index], &in->fds[index + 1], (size_t)n * sizeof(int));
+    memmove(&in->devnames[index], &in->devnames[index + 1], (size_t)n * 64);
+    memmove(&in->nodenames[index], &in->nodenames[index + 1], (size_t)n * 32);
+  }
+  in->count--;
+}
 
+bool input_init(InputDev *in) {
+  if (!in)
+    return false;
+  in->count = 0;
+  in->shift = in->ctrl = in->alt = in->capslock = false;
+
+  /* Initialize inotify FIRST for fastest detection */
   in->inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
   if (in->inotify_fd >= 0) {
     in->watch_fd =
@@ -97,8 +112,11 @@ bool input_init(InputDev *in) {
   }
 
   DIR *dir = opendir("/dev/input");
-  if (!dir)
+  if (!dir) {
+    if (in->inotify_fd >= 0)
+      close(in->inotify_fd);
     return false;
+  }
 
   struct dirent *de;
   while ((de = readdir(dir))) {
@@ -109,41 +127,44 @@ bool input_init(InputDev *in) {
     }
   }
   closedir(dir);
-  return true; // We return true even if 0 devices found, because hotplug might
-               // add them later
+  return true;
 }
 
 void input_handle_hotplug(InputDev *in) {
   uint8_t buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
-  const struct inotify_event *event;
   ssize_t len;
 
   while ((len = read(in->inotify_fd, buf, sizeof(buf))) > 0) {
-    for (uint8_t *ptr = buf; ptr < buf + len;
-         ptr += sizeof(struct inotify_event) + event->len) {
-      event = (const struct inotify_event *)ptr;
+    for (uint8_t *ptr = buf; ptr < buf + len;) {
+      const struct inotify_event *event = (const struct inotify_event *)ptr;
       if (event->len && (strncmp(event->name, "event", 5) == 0)) {
-        char path[PATH_MAX];
-        snprintf(path, sizeof(path), "/dev/input/%s", event->name);
-
         if (event->mask & IN_CREATE) {
+          char path[PATH_MAX];
+          snprintf(path, sizeof(path), "/dev/input/%s", event->name);
           input_add_device(in, path);
         } else if (event->mask & IN_DELETE) {
-          /* Removal handled by read error in input_read, but we can proactively
-             clean up here if we want. Actually, for simplicity, we'll let
-             input_read handle the removal when the FD goes dead. */
+          /* Proactive removal */
+          for (int i = 0; i < in->count; i++) {
+            if (strcmp(in->nodenames[i], event->name) == 0) {
+              input_remove_device(in, i);
+              break;
+            }
+          }
         }
       }
+      ptr += sizeof(struct inotify_event) + event->len;
     }
   }
 }
 
 void input_free(InputDev *in) {
-  for (int i = 0; i < in->count; i++)
-    close(in->fds[i]);
+  if (!in)
+    return;
+  while (in->count > 0)
+    input_remove_device(in, 0);
   if (in->inotify_fd >= 0)
     close(in->inotify_fd);
-  in->count = 0;
+  in->inotify_fd = -1;
 }
 
 int input_read(InputDev *in, struct input_event *ev, int *out_idx) {
@@ -154,18 +175,8 @@ int input_read(InputDev *in, struct input_event *ev, int *out_idx) {
         *out_idx = i;
       return 1;
     } else if (n <= 0 && errno != EAGAIN) {
-      /* Device likely removed */
-      fprintf(stderr, "[INPUT] device %s (fd=%d) removed\n", in->devnames[i],
-              in->fds[i]);
-      close(in->fds[i]);
-      if (i < in->count - 1) {
-        memmove(&in->fds[i], &in->fds[i + 1],
-                (size_t)(in->count - i - 1) * sizeof(int));
-        memmove(&in->devnames[i], &in->devnames[i + 1],
-                (size_t)(in->count - i - 1) * 64);
-      }
-      in->count--;
-      i--; // Re-check this index
+      input_remove_device(in, i);
+      i--;
     }
   }
   return 0;

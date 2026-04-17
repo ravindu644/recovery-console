@@ -1,7 +1,6 @@
 #define _GNU_SOURCE
 #include "config.h"
-#define CMD_STOP                                                               \
-  "pkill -9 -x recovery; stop recovery; setprop sys.usb.config adb"
+#define CMD_STOP "pkill -9 -x recovery; stop recovery"
 #define CMD_START "start recovery"
 #include "display.h"
 #include "input.h"
@@ -122,6 +121,9 @@ int main(int argc, char **argv) {
       exec_cmd = argv[++i];
   }
 
+  InputDev in = {0};
+  input_init(&in);
+
   if (do_daemon) {
     /* Immortal mode: ignore signals that would kill us on unplug/logout */
     signal(SIGHUP, SIG_IGN);
@@ -142,13 +144,11 @@ int main(int argc, char **argv) {
   bool is_service = !do_daemon && isatty(STDIN_FILENO);
   DisplayDev disp = {0};
   Term term = {0};
-  InputDev in = {0};
   int pty_fd = -1, srv_fd = -1, cli_fd = -1;
   bool is_blanked = false;
 
   if (!display_init(&disp))
     return 1;
-  input_init(&in);
   /* term_init now receives cell dimensions from display (font metrics) */
   term_init(&term, disp.width, disp.height, disp.cell_w, disp.cell_h);
 
@@ -194,19 +194,6 @@ int main(int argc, char **argv) {
   }
   /* Non-blocking PTY enables I/O coalescing drain loop */
   fcntl(pty_fd, F_SETFL, fcntl(pty_fd, F_GETFL, 0) | O_NONBLOCK);
-
-  /* Debug: report detected input devices to the PTY display */
-  {
-    char dbg[256];
-    int dlen = snprintf(dbg, sizeof(dbg),
-                        "\r\n[INPUT] %d evdev device(s) opened:\r\n", in.count);
-    (void)write(pty_fd, dbg, (size_t)dlen);
-    for (int i = 0; i < in.count; i++) {
-      dlen = snprintf(dbg, sizeof(dbg), "  [%d] fd=%d  %s\r\n", i, in.fds[i],
-                      in.devnames[i]);
-      (void)write(pty_fd, dbg, (size_t)dlen);
-    }
-  }
 
   while (g_running) {
     fd_set rfds;
@@ -296,15 +283,7 @@ int main(int argc, char **argv) {
       ssize_t n = read(in.fds[i], &ev, sizeof(ev));
       if (n <= 0) {
         if (errno != EAGAIN) {
-          fprintf(stderr, "[INPUT] device %s removed\n", in.devnames[i]);
-          close(in.fds[i]);
-          if (i < in.count - 1) {
-            memmove(&in.fds[i], &in.fds[i + 1],
-                    (size_t)(in.count - i - 1) * sizeof(int));
-            memmove(&in.devnames[i], &in.devnames[i + 1],
-                    (size_t)(in.count - i - 1) * 64);
-          }
-          in.count--;
+          input_remove_device(&in, i);
           i--;
         }
         continue;
