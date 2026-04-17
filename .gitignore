@@ -2,3 +2,7 @@ TeamWin android_bootable_recovery android-12.1 minui/
 output/
 deps/
 *.o
+*.orig
+*.rej
+*.patch
+*.diff
