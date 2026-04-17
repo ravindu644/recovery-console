@@ -3,6 +3,9 @@
 #include "config.h"
 #include "font.h"
 #include <fcntl.h>
+#include <linux/kd.h>
+#include <linux/vt.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -13,6 +16,100 @@
 extern void drm_kick(DisplayDev *d);
 extern void fbdev_kick(DisplayDev *d);
 extern bool fbdev_init(DisplayDev *d);
+extern void drm_drop_master(DisplayDev *d);
+extern void drm_set_master(DisplayDev *d);
+
+/* ── VT switching state ─────────────────────────────────────────────────── */
+static int g_vt_fd = -1;          /* fd of our active VT (e.g. /dev/tty1) */
+static struct vt_mode g_vt_saved; /* original VT mode to restore on exit  */
+static volatile sig_atomic_t g_vt_active = 1; /* 1 = we own the display     */
+
+/* Call from SIGUSR1 handler context: drop DRM master and release the VT. */
+void vt_release(DisplayDev *d) {
+  g_vt_active = 0;
+  if (d->is_drm)
+    drm_drop_master(d);
+  /* For fbdev there is nothing to "drop"; just stop writing (g_vt_active=0). */
+  if (g_vt_fd >= 0)
+    ioctl(g_vt_fd, VT_RELDISP, 1); /* ack: kernel may now switch */
+}
+
+/* Call from SIGUSR2 handler context: re-acquire DRM master and re-render. */
+void vt_acquire(DisplayDev *d) {
+  if (g_vt_fd >= 0)
+    ioctl(g_vt_fd, VT_RELDISP, VT_ACKACQ); /* optional but polite */
+  if (d->is_drm)
+    drm_set_master(d);
+  g_vt_active = 1;
+}
+
+/* Restore VT_AUTO mode; call before exit. */
+void vt_restore(void) {
+  if (g_vt_fd < 0)
+    return;
+  ioctl(g_vt_fd, KDSETMODE, KD_TEXT);
+  ioctl(g_vt_fd, VT_SETMODE, &g_vt_saved);
+  close(g_vt_fd);
+  g_vt_fd = -1;
+}
+
+/* Open the active VT and register VT_PROCESS mode with SIGUSR1/SIGUSR2. */
+int vt_init(DisplayDev *d) {
+  /* /dev/tty0 always refers to the currently active VT for ioctls. */
+  int tty0 = open("/dev/tty0", O_RDWR | O_CLOEXEC);
+  if (tty0 < 0)
+    tty0 = open("/dev/console", O_RDWR | O_CLOEXEC);
+  if (tty0 < 0)
+    return -1;
+
+  struct vt_stat vts = {0};
+  ioctl(tty0, VT_GETSTATE, &vts);
+  int active_vt = vts.v_active ? vts.v_active : 1;
+  close(tty0);
+
+  char vtpath[32];
+  snprintf(vtpath, sizeof(vtpath), "/dev/tty%d", active_vt);
+  g_vt_fd = open(vtpath, O_RDWR | O_CLOEXEC);
+  if (g_vt_fd < 0) {
+    /* Fallback: maybe we ARE on the controlling tty */
+    g_vt_fd = open("/dev/tty", O_RDWR | O_CLOEXEC);
+    if (g_vt_fd < 0)
+      return -1;
+  }
+
+  /* Save original mode so we can restore it. */
+  if (ioctl(g_vt_fd, VT_GETMODE, &g_vt_saved) < 0) {
+    close(g_vt_fd);
+    g_vt_fd = -1;
+    return -1;
+  }
+
+  /* Switch VT to graphics mode so the kernel won't paint text over us. */
+  ioctl(g_vt_fd, KDSETMODE, KD_GRAPHICS);
+
+  /* Tell the kernel we handle VT switches ourselves. */
+  struct vt_mode vm = {
+      .mode = VT_PROCESS,
+      .waitv = 0,
+      .relsig = SIGUSR1, /* kernel sends SIGUSR1 when another VT wants focus */
+      .acqsig = SIGUSR2, /* kernel sends SIGUSR2 when we regain focus        */
+      .frsig = 0,
+  };
+  if (ioctl(g_vt_fd, VT_SETMODE, &vm) < 0) {
+    ioctl(g_vt_fd, KDSETMODE, KD_TEXT);
+    close(g_vt_fd);
+    g_vt_fd = -1;
+    return -1;
+  }
+
+  /* We are the active VT right now, so grab DRM master. */
+  if (d->is_drm)
+    drm_set_master(d);
+
+  g_vt_active = 1;
+  (void)d;
+  return g_vt_fd;
+}
 
 static uint32_t palette[256];
 
@@ -108,7 +205,7 @@ resolve_color(uint32_t c) {
 static const int braille_map[2][4] = {{0, 1, 2, 6}, {3, 4, 5, 7}};
 
 void display_render(DisplayDev *d, Term *t) {
-  if (!g_fb)
+  if (!g_fb || !g_vt_active)
     return;
   bool any = t->screen_dirty;
   t->screen_dirty = false;

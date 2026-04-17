@@ -163,7 +163,9 @@ bool drm_init_dev(DisplayDev *d) {
   }
   memset(d->buf.map, 0, d->buf.size);
 
-  ioctl(d->fd, 0x0000641E /* DRM_IOCTL_SET_MASTER */, 0);
+  /* Acquire master only long enough to program the CRTC, then drop it so
+   * startx / another DRM client can take over on a VT switch. */
+  ioctl(d->fd, DRM_IOCTL_SET_MASTER, 0);
   struct drm_mode_crtc cc = {.crtc_id = used_crtc,
                              .fb_id = d->buf.fb_id,
                              .set_connectors_ptr = (uintptr_t)&best_c,
@@ -179,6 +181,9 @@ bool drm_init_dev(DisplayDev *d) {
     free(encs);
     goto fail_fd;
   }
+
+  /* Drop master immediately; vt_acquire() will re-grab when we are active. */
+  ioctl(d->fd, DRM_IOCTL_DROP_MASTER, 0);
 
   free(ms);
   free(crtcs);
@@ -202,4 +207,14 @@ void drm_free_dev(DisplayDev *d) {
 void drm_kick(DisplayDev *d) {
   struct drm_mode_fb_dirty_cmd dy = {.fb_id = d->buf.fb_id};
   ioctl(d->fd, 0xC01064B1 /* DRM_IOCTL_MODE_DIRTYFB */, &dy);
+}
+
+void drm_drop_master(DisplayDev *d) {
+  if (d->fd >= 0)
+    ioctl(d->fd, DRM_IOCTL_DROP_MASTER, 0);
+}
+
+void drm_set_master(DisplayDev *d) {
+  if (d->fd >= 0)
+    ioctl(d->fd, DRM_IOCTL_SET_MASTER, 0);
 }

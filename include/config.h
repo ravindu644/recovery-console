@@ -6,13 +6,13 @@
 #include <stdio.h>
 
 /* Cell height in pixels; width is derived from font metrics */
-#define FONT_SIZE 26
+#define FONT_SIZE 19
 
-#define MARGIN_TOP 85
-#define MARGIN_BOTTOM 50
-#define MARGIN_LEFT 0
-#define MARGIN_RIGHT 0
-#define ROTATION 0 /* 0=0deg, 1=90deg, 2=180deg, 3=270deg CW */
+#define MARGIN_TOP 20
+#define MARGIN_BOTTOM 20
+#define MARGIN_LEFT 75
+#define MARGIN_RIGHT 20
+#define ROTATION 1 /* 0=0deg, 1=90deg, 2=180deg, 3=270deg CW */
 
 /* VGA palette defaults (indices into 256-color palette) */
 #define DEFAULT_FG 7
@@ -20,7 +20,7 @@
 #define CURSOR_COLOR 15
 
 /* Display format: 0=RGB, 1=BGR */
-#define COLOR_BGR 0
+#define COLOR_BGR 1
 
 /* Hardware */
 #define DRM_DEVICE "/dev/dri/card0"

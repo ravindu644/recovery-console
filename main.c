@@ -1,10 +1,7 @@
 #define _GNU_SOURCE
 #include "config.h"
-#define CMD_STOP                                                               \
-  "setprop sys.usb.config none && stop recovery && setprop sys.usb.config adb"
-#define CMD_START                                                              \
-  "setprop sys.usb.config none && start recovery && setprop sys.usb.config "   \
-  "adb"
+#define CMD_STOP "stop recovery ; setprop sys.usb.config adb"
+#define CMD_START "start recovery ; setprop sys.usb.config adb"
 #include "display.h"
 #include "input.h"
 #include "term.h"
@@ -26,6 +23,7 @@
 #include <unistd.h>
 
 static volatile sig_atomic_t g_running = 1, g_sigchld = 0;
+static volatile sig_atomic_t g_vt_rel = 0, g_vt_acq = 0; /* VT switch flags */
 static struct termios g_saved_tio;
 static bool g_tio_saved = false;
 
@@ -35,6 +33,17 @@ static void on_sig(int s) {
     g_running = 0;
   } else
     g_running = 0;
+}
+
+/* SIGUSR1: kernel asking us to release the VT (another VT wants focus). */
+static void on_vt_rel(int s) {
+  (void)s;
+  g_vt_rel = 1;
+}
+/* SIGUSR2: kernel telling us we have regained the VT. */
+static void on_vt_acq(int s) {
+  (void)s;
+  g_vt_acq = 1;
 }
 
 static void stdin_raw(void) {
@@ -172,6 +181,17 @@ int main(int argc, char **argv) {
   struct sigaction sa = {.sa_handler = on_sig};
   sigaction(SIGCHLD, &sa, NULL);
 
+  /* Register VT_PROCESS mode: SIGUSR1 = release, SIGUSR2 = acquire. */
+  {
+    struct sigaction svt = {0};
+    svt.sa_handler = on_vt_rel;
+    sigemptyset(&svt.sa_mask);
+    sigaction(SIGUSR1, &svt, NULL);
+    svt.sa_handler = on_vt_acq;
+    sigaction(SIGUSR2, &svt, NULL);
+  }
+  vt_init(&disp);
+
   if (background_mode) {
     /* Daemon: Ignore everything except SIGKILL */
     signal(SIGHUP, SIG_IGN);
@@ -248,6 +268,20 @@ int main(int argc, char **argv) {
       if (errno == EINTR)
         continue;
       break;
+    }
+
+    /* ── VT switching ──────────────────────────────────────────────────── */
+    if (g_vt_rel) {
+      g_vt_rel = 0;
+      vt_release(&disp); /* drop DRM master, ack release to kernel */
+    }
+    if (g_vt_acq) {
+      g_vt_acq = 0;
+      vt_acquire(&disp); /* re-acquire DRM master */
+      /* Redraw everything now that we own the display again. */
+      for (int r = 0; r < term.rows; r++)
+        term.dirty[r] = true;
+      display_render(&disp, &term);
     }
 
     if (srv_fd >= 0 && FD_ISSET(srv_fd, &rfds)) {
