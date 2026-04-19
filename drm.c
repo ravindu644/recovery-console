@@ -60,7 +60,7 @@ static uint32_t get_prop_id(int fd, uint32_t obj_id, uint32_t obj_type,
 }
 
 /* Force backlight/brightness to defined level. */
-static void backlight_set(int val) {
+void backlight_set(int val) {
   FILE *bf = fopen(BACKLIGHT_PATH, "w");
   if (bf) {
     fprintf(bf, "%d\n", val);
@@ -489,6 +489,10 @@ void drm_set_power(DisplayDev *d, bool on) {
       drm_force_dpms_on(d);
     ioctl(d->fd, DRM_IOCTL_DROP_MASTER, 0);
   }
+
+  /* Physical backlight sync */
+  backlight_set(on ? BACKLIGHT_VAL : 0);
+
   drm_drop_master(d);
 }
 

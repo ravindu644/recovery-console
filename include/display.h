@@ -45,6 +45,7 @@ void display_render(DisplayDev *d, Term *t);
 void display_blank(DisplayDev *d, bool blank);
 void display_kick(DisplayDev *d);
 void display_free(DisplayDev *d);
+void backlight_set(int val);
 
 /*  VT switching support
  *

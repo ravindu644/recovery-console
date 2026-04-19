@@ -536,11 +536,14 @@ pty_dead:
     kill(child, SIGTERM);
     waitpid(child, NULL, 0);
   }
-  display_blank(&disp, true); /* black screen on exit */
+
+  is_blanked = true;
+  display_blank(&disp, true); /* black screen + backlight off */
+
   stdin_restore();
   input_free(&in);
   term_free(&term);
-  display_free(&disp); /* vt_restore() called inside */
+
   if (cli_fd >= 0)
     close(cli_fd);
   if (srv_fd >= 0) {
@@ -549,6 +552,10 @@ pty_dead:
   }
   if (pty_fd >= 0)
     close(pty_fd);
+
+  display_free(&disp); /* vt_restore inside */
+
+  sync();
   (void)system(CMD_START);
   return 0;
 }

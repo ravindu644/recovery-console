@@ -517,8 +517,10 @@ void display_blank(DisplayDev *d, bool blank) {
         memset(g_fb, 0, d->buf.size);
       display_kick(d);
     }
+    drm_set_power(d, !blank);
   } else {
     fbdev_blank(d, blank);
+    backlight_set(blank ? 0 : BACKLIGHT_VAL);
   }
 }
 
