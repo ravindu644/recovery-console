@@ -387,6 +387,7 @@ bool drm_init_dev(DisplayDev *d) {
   }
 
   drm_force_dpms_on(d); /* wake panel */
+  drm_drop_master(d);   /* allow other processes to probe */
 
   free(modes);
   d->is_drm = true;
@@ -413,6 +414,7 @@ void drm_free_dev(DisplayDev *d) {
 void drm_reprogram_crtc(DisplayDev *d) {
   if (d->fd < 0 || !d->buf.fb_id || !d->buf.crtc_id)
     return;
+  drm_set_master(d);
   uint32_t conn = d->buf.conn_id;
   struct drm_mode_crtc cc = {
       .crtc_id = d->buf.crtc_id,
@@ -424,12 +426,15 @@ void drm_reprogram_crtc(DisplayDev *d) {
   };
   ioctl(d->fd, DRM_IOCTL_MODE_SETCRTC, &cc);
   drm_force_dpms_on(d);
+  drm_drop_master(d);
 }
 
 /* Set display power state (on/off). Uses Atomic if available, else Legacy. */
 void drm_set_power(DisplayDev *d, bool on) {
-  if (d->fd < 0 || !d->buf.crtc_id)
+  if (d->fd < 0 || !d->is_drm)
     return;
+
+  drm_set_master(d);
 
   if (d->buf.props.crtc_active) {
     /* Atomic Path */
@@ -484,6 +489,7 @@ void drm_set_power(DisplayDev *d, bool on) {
       drm_force_dpms_on(d);
     ioctl(d->fd, DRM_IOCTL_DROP_MASTER, 0);
   }
+  drm_drop_master(d);
 }
 
 /* TWRP-style power-on kickstart: off -> blank -> unblank -> on. */
@@ -505,12 +511,18 @@ void drm_atomic_set_active(DisplayDev *d, bool active) {
 void drm_kick(DisplayDev *d) {
   if (d->fd < 0 || !d->buf.map)
     return;
+
+  /* Try to grab master; if busy, skip this frame (likely Xorg is active) */
+  if (ioctl(d->fd, DRM_IOCTL_SET_MASTER, 0) < 0)
+    return;
 #if USE_SHADOW_BUFFER
   if (d->shadow)
     memcpy(d->buf.map, d->shadow, d->buf.size);
 #endif
   struct drm_mode_fb_dirty_cmd dy = {.fb_id = d->buf.fb_id};
   ioctl(d->fd, DRM_IOCTL_MODE_DIRTYFB, &dy);
+
+  drm_drop_master(d);
 }
 
 /* CRTC-level blank: detaches connector (panel off + backlight off on LCD).

@@ -109,8 +109,8 @@ int vt_init(DisplayDev *d) {
     return -1;
   }
 
-  /* drm_kick() grabs/drops master per render; no persistent master here.
-   * Weston/Xorg can take SET_MASTER freely between our render cycles.  */
+  /* We use a transient master model: drm_kick() grabs/drops master per frame.
+   * This allows Xorg/Wayland on other VTs to work without "device busy". */
   g_vt_active = 1;
   return g_vt_fd;
 }
