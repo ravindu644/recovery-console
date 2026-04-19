@@ -48,6 +48,7 @@ typedef struct Term {
   uint8_t saved_attr;
   int saved_scroll_top, saved_scroll_bot;
   bool saved_wrapnext;
+  bool saved_charset_gfx;
 
   /* Deferred-wrap flag (st: CURSOR_WRAPNEXT).
    * Set when a printable char fills the last column with autowrap on.

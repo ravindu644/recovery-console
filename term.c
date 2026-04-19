@@ -145,6 +145,7 @@ void term_init(Term *t, int px_w, int px_h, int cell_w, int cell_h) {
   t->scroll_bot = t->rows - 1;
   t->saved_scroll_top = 0;
   t->saved_scroll_bot = t->rows - 1;
+  t->saved_charset_gfx = false;
   t->fg = DEFAULT_FG;
   t->bg = DEFAULT_BG;
   t->cursor_visible = true;
@@ -326,6 +327,7 @@ static void csi_dispatch(Term *t, char fin) {
     t->saved_scroll_top = t->scroll_top;
     t->saved_scroll_bot = t->scroll_bot;
     t->saved_wrapnext = t->cursor_wrapnext;
+    t->saved_charset_gfx = t->charset_gfx;
     break;
   case 'u': /* restore cursor (ANSI) */
     t->fg = t->saved_fg;
@@ -334,6 +336,7 @@ static void csi_dispatch(Term *t, char fin) {
     t->scroll_top = t->saved_scroll_top;
     t->scroll_bot = t->saved_scroll_bot;
     t->cursor_wrapnext = t->saved_wrapnext;
+    t->charset_gfx = t->saved_charset_gfx;
     tmoveto(t, t->saved_cx, t->saved_cy);
     break;
   case 'm':
@@ -557,6 +560,7 @@ void term_write(Term *t, const uint8_t *buf, int n) {
         t->saved_scroll_top = t->scroll_top;
         t->saved_scroll_bot = t->scroll_bot;
         t->saved_wrapnext = t->cursor_wrapnext;
+        t->saved_charset_gfx = t->charset_gfx;
         t->state = ST_GROUND;
       } else if (ch == '8') {
         /* DECRC restore cursor */
@@ -566,6 +570,7 @@ void term_write(Term *t, const uint8_t *buf, int n) {
         t->scroll_top = t->saved_scroll_top;
         t->scroll_bot = t->saved_scroll_bot;
         t->cursor_wrapnext = t->saved_wrapnext;
+        t->charset_gfx = t->saved_charset_gfx;
         tmoveto(t, t->saved_cx, t->saved_cy);
         t->state = ST_GROUND;
       } else if (ch == 'c') {
