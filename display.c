@@ -355,6 +355,7 @@ void display_render(DisplayDev *d, Term *t) {
         int mx = pw / 2, my = ch / 2;
         uint8_t flags = 0; /* bits: 0=left 1=right 2=up 3=down */
         bool dbl = (code >= 0x2550 && code <= 0x256C);
+        bool rnd = (code >= 0x256D && code <= 0x2570);
 
         if (code <= 0x2501)
           flags = 3;
@@ -367,6 +368,9 @@ void display_render(DisplayDev *d, Term *t) {
           int idx = (int)(code - 0x2550);
           flags =
               (idx >= 0 && idx < (int)sizeof(dbl_flags)) ? dbl_flags[idx] : 0;
+        } else if (rnd) {
+          static const uint8_t rnd_flags[] = {10, 9, 5, 6};
+          flags = rnd_flags[code - 0x256D];
         } else {
           static const uint8_t box_flags[] = {
               10, 10, 10, 10, 9,  9,  9,  9,  6,  6,  6,  6,  5,  5,  5,  5,
@@ -397,6 +401,34 @@ void display_render(DisplayDev *d, Term *t) {
             vfill(x0 + mx - o, y0 + my + o, ch - my - o, fg);
             vfill(x0 + mx + o, y0 + my - o, ch - my + o, fg);
           }
+        } else if (rnd) {
+          /* Rounded corners: draw arcs */
+          int r = (ch > 16) ? 3 : 2;
+          if (flags & 1)
+            hfill(x0, y0 + my, mx - r + 1, fg);
+          if (flags & 2)
+            hfill(x0 + mx + r, y0 + my, pw - mx - r, fg);
+          if (flags & 4)
+            vfill(x0 + mx, y0, my - r + 1, fg);
+          if (flags & 8)
+            vfill(x0 + mx, y0 + my + r, ch - my - r, fg);
+          /* Bend pixels */
+          if (flags == 10) {
+            *fb_px(x0 + mx + 1, y0 + my + 1) = fg;
+            *fb_px(x0 + mx + 2, y0 + my + 2) = fg;
+          } /* UL */
+          if (flags == 9) {
+            *fb_px(x0 + mx - 1, y0 + my + 1) = fg;
+            *fb_px(x0 + mx - 2, y0 + my + 2) = fg;
+          } /* UR */
+          if (flags == 6) {
+            *fb_px(x0 + mx + 1, y0 + my - 1) = fg;
+            *fb_px(x0 + mx + 2, y0 + my - 2) = fg;
+          } /* LL */
+          if (flags == 5) {
+            *fb_px(x0 + mx - 1, y0 + my - 1) = fg;
+            *fb_px(x0 + mx - 2, y0 + my - 2) = fg;
+          } /* LR */
         } else {
           /* Single lines */
           if (flags & 1)

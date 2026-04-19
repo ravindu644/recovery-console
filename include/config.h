@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 /* Cell height in pixels; width is derived from font metrics */
-#define FONT_SIZE 24
+#define FONT_SIZE 22
 
 #define MARGIN_TOP 95
 #define MARGIN_BOTTOM 45
