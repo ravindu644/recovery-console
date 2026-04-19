@@ -403,15 +403,15 @@ void display_render(DisplayDev *d, Term *t) {
           }
         } else if (rnd) {
           /* Rounded corners: draw arcs */
-          int r = (ch > 16) ? 3 : 2;
+          int arc_r = (ch > 16) ? 3 : 2;
           if (flags & 1)
-            hfill(x0, y0 + my, mx - r + 1, fg);
+            hfill(x0, y0 + my, mx - arc_r + 1, fg);
           if (flags & 2)
-            hfill(x0 + mx + r, y0 + my, pw - mx - r, fg);
+            hfill(x0 + mx + arc_r, y0 + my, pw - mx - arc_r, fg);
           if (flags & 4)
-            vfill(x0 + mx, y0, my - r + 1, fg);
+            vfill(x0 + mx, y0, my - arc_r + 1, fg);
           if (flags & 8)
-            vfill(x0 + mx, y0 + my + r, ch - my - r, fg);
+            vfill(x0 + mx, y0 + my + arc_r, ch - my - arc_r, fg);
           /* Bend pixels */
           if (flags == 10) {
             *fb_px(x0 + mx + 1, y0 + my + 1) = fg;
