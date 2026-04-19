@@ -1,7 +1,10 @@
 #define _GNU_SOURCE
 #include "config.h"
-#define CMD_STOP "pkill -9 -x recovery; stop recovery"
-#define CMD_START "start recovery"
+#define CMD_STOP                                                               \
+  "setprop sys.usb.config none && stop recovery && setprop sys.usb.config adb"
+#define CMD_START                                                              \
+  "setprop sys.usb.config none && start recovery && setprop sys.usb.config "   \
+  "adb"
 #include "display.h"
 #include "input.h"
 #include "term.h"
@@ -109,22 +112,36 @@ static pid_t spawn_shell(int *pty_fd, int cols, int rows, const char *cmd) {
   return pid;
 }
 
+static void usage(const char *prog) {
+  printf("Android Recovery Console\n\n");
+  printf("Usage: %s [options]\n\n", prog);
+  printf("Options:\n");
+  printf("  --background    Run as a background daemon\n");
+  printf("  --exec <cmd>    Execute specific command\n");
+  printf("  --attach        Connect to background session\n");
+  printf("  --help          Show this help\n");
+}
+
 int main(int argc, char **argv) {
   char *exec_cmd = NULL;
-  bool do_daemon = false;
+  bool background_mode = false;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--attach") == 0)
       return do_attach();
-    if (strcmp(argv[i], "--daemon") == 0)
-      do_daemon = true;
+    if (strcmp(argv[i], "--background") == 0)
+      background_mode = true;
     if (strcmp(argv[i], "--exec") == 0 && i + 1 < argc)
       exec_cmd = argv[++i];
+    if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+      usage(argv[0]);
+      return 0;
+    }
   }
 
   InputDev in = {0};
   input_init(&in);
 
-  if (do_daemon) {
+  if (background_mode) {
     /* Immortal mode: ignore signals that would kill us on unplug/logout */
     signal(SIGHUP, SIG_IGN);
     signal(SIGINT, SIG_IGN);
@@ -141,7 +158,7 @@ int main(int argc, char **argv) {
     sleep(1);
   }
 
-  bool is_service = !do_daemon && isatty(STDIN_FILENO);
+  bool is_service = !background_mode && isatty(STDIN_FILENO);
   DisplayDev disp = {0};
   Term term = {0};
   int pty_fd = -1, srv_fd = -1, cli_fd = -1;
@@ -155,7 +172,7 @@ int main(int argc, char **argv) {
   struct sigaction sa = {.sa_handler = on_sig};
   sigaction(SIGCHLD, &sa, NULL);
 
-  if (do_daemon) {
+  if (background_mode) {
     /* Daemon: Ignore everything except SIGKILL */
     signal(SIGHUP, SIG_IGN);
     signal(SIGINT, SIG_IGN);
