@@ -218,6 +218,10 @@ int main(int argc, char **argv) {
   int pty_fd = -1, srv_fd = -1, cli_fd = -1;
   bool is_blanked = false;
   int hold_vol_up = 0, hold_vol_down = 0;
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  uint64_t last_phys_input =
+      (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 
   if (!display_init(&disp))
     return 1;
@@ -349,14 +353,22 @@ int main(int argc, char **argv) {
       LOG("VT hard-detached; display suppressed");
     }
 
-  handle_signals:
+  handle_signals:;
+    struct timespec loop_ts;
+    clock_gettime(CLOCK_MONOTONIC, &loop_ts);
+    uint64_t now =
+        (uint64_t)loop_ts.tv_sec * 1000 + (uint64_t)loop_ts.tv_nsec / 1000000;
+
+    /*  Display Timeout Logic  */
+    if (!is_blanked &&
+        (now - last_phys_input > (uint64_t)DISPLAY_TIMEOUT * 1000)) {
+      is_blanked = true;
+      display_blank(&disp, true);
+    }
+
     /*  Software Key Repeat (Volume buttons)  */
     if (hold_vol_up > 0 || hold_vol_down > 0) {
       static uint64_t last_tick = 0;
-      struct timespec ts;
-      clock_gettime(CLOCK_MONOTONIC, &ts);
-      uint64_t now =
-          (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
       if (now - last_tick > 50) { /* 20Hz repeat */
         if (hold_vol_up)
           term_scroll(&term, -3);
@@ -364,6 +376,7 @@ int main(int argc, char **argv) {
           term_scroll(&term, 3);
         display_render(&disp, &term);
         last_tick = now;
+        last_phys_input = now; /* verify: scrolling counts as activity */
       }
     }
 
@@ -391,8 +404,20 @@ int main(int argc, char **argv) {
       if (cli_fd >= 0)
         close(cli_fd);
       cli_fd = accept(srv_fd, NULL, NULL);
-      if (cli_fd >= 0)
+      if (cli_fd >= 0) {
         replay_send(cli_fd); /* send scrollback to new attach client */
+        /* Wake display on new connection */
+        if (is_blanked) {
+          is_blanked = false;
+          display_blank(&disp, false);
+          for (int r = 0; r < term.rows; r++)
+            term.dirty[r] = true;
+          display_render(&disp, &term);
+        }
+        clock_gettime(CLOCK_MONOTONIC, &loop_ts);
+        last_phys_input = (uint64_t)loop_ts.tv_sec * 1000 +
+                          (uint64_t)loop_ts.tv_nsec / 1000000;
+      }
     }
 
     /*  Stdin (is_service mode)  */
@@ -457,6 +482,9 @@ int main(int argc, char **argv) {
       }
       if (n != sizeof(ev) || ev.type != EV_KEY)
         continue;
+
+      /* Hardware activity detected */
+      last_phys_input = now;
 
       /* Power key: toggle display blank / unblank. */
       if (ev.code == KEY_POWER && ev.value == 1) {

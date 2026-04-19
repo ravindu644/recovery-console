@@ -6,13 +6,14 @@
 #include <stdio.h>
 
 /* Cell height in pixels; width is derived from font metrics */
-#define FONT_SIZE 26
+#define FONT_SIZE 24
 
-#define MARGIN_TOP 90
-#define MARGIN_BOTTOM 20
-#define MARGIN_LEFT 20
-#define MARGIN_RIGHT 20
-#define ROTATION 0 /* 0=0deg, 1=90deg, 2=180deg, 3=270deg CW */
+#define MARGIN_TOP 95
+#define MARGIN_BOTTOM 45
+#define MARGIN_LEFT 10
+#define MARGIN_RIGHT 10
+#define ROTATION 0         /* 0=0deg, 1=90deg, 2=180deg, 3=270deg CW */
+#define DISPLAY_TIMEOUT 60 /* seconds of inactivity before sleep */
 
 /* VGA palette defaults (indices into 256-color palette) */
 #define DEFAULT_FG 7
@@ -56,7 +57,7 @@
 
 #define BACKLIGHT_PATH                                                         \
   "/sys/devices/platform/soc/soc:mtk_leds/leds/lcd-backlight/brightness"
-#define BACKLIGHT_VAL 255
+#define BACKLIGHT_VAL 200
 
 #define LOG(fmt, ...)                                                          \
   do {                                                                         \
