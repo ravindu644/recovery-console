@@ -1,10 +1,13 @@
 #define _GNU_SOURCE
 #include "config.h"
+#define CMD_STOP "pkill -9 -x recovery; stop recovery"
+#define CMD_START "start recovery"
 #include "display.h"
 #include "input.h"
 #include "term.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/input-event-codes.h>
 #include <pty.h>
 #include <signal.h>
 #include <stdio.h>
@@ -118,6 +121,9 @@ int main(int argc, char **argv) {
       exec_cmd = argv[++i];
   }
 
+  InputDev in = {0};
+  input_init(&in);
+
   if (do_daemon) {
     /* Immortal mode: ignore signals that would kill us on unplug/logout */
     signal(SIGHUP, SIG_IGN);
@@ -127,18 +133,22 @@ int main(int argc, char **argv) {
       perror("daemon");
       return 1;
     }
+    (void)system(CMD_STOP);
+    sleep(1);
+  } else {
+    setsid();
+    (void)system(CMD_STOP);
+    sleep(1);
   }
 
   bool is_service = !do_daemon && isatty(STDIN_FILENO);
   DisplayDev disp = {0};
   Term term = {0};
-  InputDev in = {0};
   int pty_fd = -1, srv_fd = -1, cli_fd = -1;
   bool is_blanked = false;
 
   if (!display_init(&disp))
     return 1;
-  input_init(&in);
   /* term_init now receives cell dimensions from display (font metrics) */
   term_init(&term, disp.width, disp.height, disp.cell_w, disp.cell_h);
 
@@ -210,6 +220,11 @@ int main(int argc, char **argv) {
       if (in.fds[i] > maxfd)
         maxfd = in.fds[i];
     }
+    if (in.inotify_fd >= 0) {
+      FD_SET(in.inotify_fd, &rfds);
+      if (in.inotify_fd > maxfd)
+        maxfd = in.inotify_fd;
+    }
 
     struct timeval tv = {0, SELECT_US};
     if (select(maxfd + 1, &rfds, NULL, NULL, &tv) < 0) {
@@ -231,6 +246,9 @@ int main(int argc, char **argv) {
         (void)write(pty_fd, b, (size_t)n);
       } else
         is_service = false;
+    }
+    if (in.inotify_fd >= 0 && FD_ISSET(in.inotify_fd, &rfds)) {
+      input_handle_hotplug(&in);
     }
     if (cli_fd >= 0 && FD_ISSET(cli_fd, &rfds)) {
       uint8_t b[IO_BUFSZ];
@@ -262,12 +280,21 @@ int main(int argc, char **argv) {
       if (!FD_ISSET(in.fds[i], &rfds))
         continue;
       struct input_event ev;
-      if (read(in.fds[i], &ev, sizeof(ev)) != sizeof(ev))
+      ssize_t n = read(in.fds[i], &ev, sizeof(ev));
+      if (n <= 0) {
+        if (errno != EAGAIN) {
+          input_remove_device(&in, i);
+          i--;
+        }
         continue;
-      if (ev.type != EV_KEY || ev.value < 1)
+      }
+      if (n != sizeof(ev))
         continue;
-      if (ev.code == 116 && ev.value == 1) {
-        /* Power key: toggle blank */
+      if (ev.type != EV_KEY)
+        continue;
+
+      /* Power key: toggle display blank */
+      if (ev.code == KEY_POWER && ev.value == 1) {
         is_blanked = !is_blanked;
         if (is_blanked) {
           display_free(&disp);
@@ -276,12 +303,26 @@ int main(int argc, char **argv) {
             term.dirty[r] = true;
           display_render(&disp, &term);
         }
-      } else if (ev.code == 115) {
+        continue;
+      }
+
+      /* Volume keys: scroll the terminal view */
+      if (ev.code == KEY_VOLUMEUP && ev.value >= 1) {
         term_scroll(&term, -3);
         display_render(&disp, &term);
-      } else if (ev.code == 114) {
+        continue;
+      }
+      if (ev.code == KEY_VOLUMEDOWN && ev.value >= 1) {
         term_scroll(&term, 3);
         display_render(&disp, &term);
+        continue;
+      }
+
+      /* All other keys: translate and forward to the PTY */
+      if (!is_blanked) {
+        int written = input_ev_to_pty(&in, &ev, pty_fd);
+        if (written > 0)
+          term_snap_to_bottom(&term);
       }
     }
   }
@@ -300,5 +341,6 @@ pty_dead:
     close(srv_fd);
     unlink(SOCKET_PATH);
   }
+  (void)system(CMD_START);
   return 0;
 }
