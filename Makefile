@@ -63,14 +63,17 @@ find-cc = $(shell \
         echo "$(1)-gcc"; \
     fi)
 
-.PHONY: all help clean native aarch64 armhf x86_64 x86
+.PHONY: all help clean native aarch64 armhf x86_64 x86 all-tarball
 
 all: help
 
+VERSION := $(shell grep -oP 'VERSION\s+"\K[^"]+' include/config.h 2>/dev/null || echo "v0.0.1")
+TARBALL := recovery-console-$(VERSION)-$(shell date +%Y%m%d).tar.gz
+
 help:
-	@echo "Targets : native  aarch64  armhf  x86_64  x86  clean"
+	@echo "Targets : native  aarch64  armhf  x86_64  x86  all-tarball  clean"
 	@echo "Options : V=1 verbose | STATIC=1 full static binary"
-	@echo "Env     : MUSL_CROSS=<dir> to point at musl toolchain"
+	@echo "Env     : MUSL_CROSS=<dir> point at musl toolchain"
 
 STRIP ?= strip
 
@@ -121,5 +124,19 @@ x86:
 	[ -n "$$CC" ] || { echo "ERROR: i686-linux-musl-gcc not found"; exit 1; } ; \
 	$(MAKE) -j$(NPROC) $(BINARY) CC=$$CC STRIP=$${CC%gcc}strip STATIC=1
 
+# ── Dependency build target ───────────────────────────────────────────────
+build-deps:
+	@echo "[*] Building dependencies for all architectures..."
+	$(Q)./scripts/build-freetype.sh aarch64-linux-musl
+	$(Q)./scripts/build-freetype.sh arm-linux-musleabihf
+	$(Q)./scripts/build-freetype.sh x86_64-linux-musl
+	$(Q)./scripts/build-freetype.sh i686-linux-musl
+
+# ── CI/Release target ─────────────────────────────────────────────────────
+all-tarball: aarch64 armhf x86_64 x86
+	@printf "  TAR  %s\n" $(TARBALL)
+	$(Q)tar -czf $(TARBALL) -C $(OUTDIR) .
+	@echo "==> $(TARBALL)"
+
 clean:
-	@rm -rf $(OUTDIR) && echo "cleaned"
+	@rm -rf $(OUTDIR) *.tar.gz && echo "cleaned"

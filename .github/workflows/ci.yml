@@ -1,0 +1,132 @@
+name: Recovery Console CI
+run-name: ${{ github.event.head_commit.message || format('Release {0}', github.event.inputs.tag_name) || github.workflow }}
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create an Official GitHub Release?'
+        required: true
+        type: boolean
+        default: false
+      tag_name:
+        description: 'Tag name (Only used if Release is checked)'
+        required: false
+        default: 'test'
+
+jobs:
+  build:
+    name: Build Recovery Console
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential wget tree xxd
+
+    - name: Download Toolchains
+      run: |
+        mkdir -p $HOME/toolchains
+        cd $HOME/toolchains
+        BASE_URL="https://github.com/ravindu644/Droidspaces-OSS/releases/download/compilers"
+
+        echo "[*] Downloading aarch64 toolchain..."
+        wget -q $BASE_URL/aarch64-linux-musl-cross.tar.gz
+
+        echo "[*] Downloading armhf toolchain..."
+        wget -q $BASE_URL/arm-linux-musleabihf-cross.tar.gz
+
+        echo "[*] Downloading x86 toolchain..."
+        wget -q $BASE_URL/i686-linux-musl-cross.tar.gz
+
+        echo "[*] Downloading x86_64 toolchain..."
+        wget -q $BASE_URL/x86_64-linux-musl-cross.tar.gz
+
+        echo "[*] Extracting toolchains..."
+        for f in *.tar.gz; do
+          echo "Extracting $f..."
+          tar -xzf "$f"
+        done
+
+        echo "[+] Toolchains ready."
+        tree -L 3 $HOME/toolchains
+
+    - name: Build Dependencies
+      run: make build-deps
+
+    - name: Build All Tarball
+      run: make all-tarball
+
+    - name: Stage & Rename Artifacts
+      run: |
+        TAR_NAME=$(ls recovery-console-v*-*.tar.gz)
+        mkdir -p dist
+        mv ${TAR_NAME} dist/
+        echo "TAR_FILE=dist/${TAR_NAME}" >> $GITHUB_ENV
+
+    - name: Upload Final Artifacts (Tarball)
+      uses: actions/upload-artifact@v4
+      with:
+        name: recovery-console-artifacts
+        path: dist/
+
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.create_release == 'true' &&
+      github.event.inputs.tag_name != '' &&
+      github.event.inputs.tag_name != 'test'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: release-assets
+        merge-multiple: true
+
+    - name: Generate Changelog
+      id: changelog
+      run: |
+        PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        echo "Previous tag: $PREV_TAG"
+
+        if [ -z "$PREV_TAG" ]; then
+          CHANGELOG=$(git log --oneline --pretty=format:"* %s (%h)")
+        else
+          CHANGELOG=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"* %s (%h)")
+        fi
+
+        {
+          echo "notes<<EOF"
+          echo "$CHANGELOG"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.event.inputs.tag_name }}
+        name: Recovery Console ${{ github.event.inputs.tag_name || 'Development Build' }}
+        target_commitish: ${{ github.sha }}
+        body: |
+          ## What's Changed
+          ${{ steps.changelog.outputs.notes }}
+
+          ---
+          **Automated Release by Recovery Console CI**
+        files: |
+          release-assets/*.tar.gz

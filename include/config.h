@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define VERSION "v1.0.0"
+
 /* Cell height in pixels; width is derived from font metrics */
 #define FONT_SIZE 22
 
