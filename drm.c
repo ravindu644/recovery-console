@@ -282,9 +282,8 @@ bool drm_init_dev(DisplayDev *d) {
 
   /* Enable universal planes + atomic caps */
   {
-    struct drm_set_client_cap cp = {DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1};
-    ioctl(d->fd, DRM_IOCTL_SET_CLIENT_CAP, &cp);
-    cp.capability = DRM_CLIENT_CAP_ATOMIC;
+    struct drm_set_client_cap cp = {
+        .capability = DRM_CLIENT_CAP_UNIVERSAL_PLANES, .value = 1};
     ioctl(d->fd, DRM_IOCTL_SET_CLIENT_CAP, &cp);
   }
 
