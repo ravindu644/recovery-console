@@ -435,6 +435,10 @@ int main(int argc, char **argv) {
     if (in.inotify_fd >= 0 && FD_ISSET(in.inotify_fd, &rfds))
       input_handle_hotplug(&in);
 
+    /*  Deferred boot rescan (catches keyboards attached before udev settled) */
+    if (in.rescan_at_ms && now >= in.rescan_at_ms)
+      input_rescan(&in);
+
     /*  Socket client input  */
     if (cli_fd >= 0 && FD_ISSET(cli_fd, &rfds)) {
       uint8_t b[IO_BUFSZ];

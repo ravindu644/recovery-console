@@ -3,8 +3,9 @@
 
 #include <linux/input.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-#define MAX_INPUTS 8
+#define MAX_INPUTS 32
 
 typedef struct {
   int fds[MAX_INPUTS];
@@ -13,6 +14,7 @@ typedef struct {
   int count;
   int inotify_fd;
   int watch_fd;
+  uint64_t rescan_at_ms;   /* monotonic ms: 0 = no pending rescan */
   /* modifier state */
   bool shift;
   bool ctrl;
@@ -26,6 +28,7 @@ void input_flush(InputDev *in);
 int input_read(InputDev *in, struct input_event *ev, int *out_idx);
 void input_handle_hotplug(InputDev *in);
 void input_remove_device(InputDev *in, int index);
+void input_rescan(InputDev *in);
 int input_ev_to_pty(InputDev *in, const struct input_event *ev, int pty_fd);
 
 #endif

@@ -57,16 +57,51 @@ static const char key_shifted[KEY_MAX] = {
 };
 
 #include <sys/inotify.h>
+#include <time.h>
+
+static uint64_t mono_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+/*
+ * Try to open and register one evdev node.
+ *
+ * - Dedup by nodename: silently skip if already tracked.
+ * - Retry open up to MAX_OPEN_TRIES times with OPEN_RETRY_MS delay to
+ *   handle the kernel/udev race where IN_CREATE fires before the node
+ *   is ready to open (common on USB attach).
+ * - Accept any device with EV_KEY capability (keyboards, vol keys,
+ *   power key) — same policy as before, just with dedup + retry.
+ */
+#define MAX_OPEN_TRIES 5
+#define OPEN_RETRY_MS  50
 
 static void input_add_device(InputDev *in, const char *path) {
   if (in->count >= MAX_INPUTS)
     return;
 
-  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  const char *slash = strrchr(path, '/');
+  const char *nodename = slash ? slash + 1 : path;
+
+  /* Dedup: skip if already tracking this node */
+  for (int i = 0; i < in->count; i++) {
+    if (strcmp(in->nodenames[i], nodename) == 0)
+      return;
+  }
+
+  /* Retry open to handle udev/kernel node-creation race */
+  int fd = -1;
+  for (int t = 0; t < MAX_OPEN_TRIES && fd < 0; t++) {
+    if (t > 0)
+      usleep(OPEN_RETRY_MS * 1000);
+    fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  }
   if (fd < 0)
     return;
 
-  /* Filter: Only include devices with keys */
+  /* Filter: only devices that can emit key events */
   unsigned long evbits[(EV_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
   if (ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits) < 0 ||
       !(evbits[0] & (1UL << EV_KEY))) {
@@ -79,9 +114,7 @@ static void input_add_device(InputDev *in, const char *path) {
 
   in->fds[in->count] = fd;
   snprintf(in->devnames[in->count], sizeof(in->devnames[0]), "%s", devname);
-  const char *slash = strrchr(path, '/');
-  snprintf(in->nodenames[in->count], sizeof(in->nodenames[0]), "%s",
-           slash ? slash + 1 : path);
+  snprintf(in->nodenames[in->count], sizeof(in->nodenames[0]), "%s", nodename);
   in->count++;
 }
 
@@ -103,8 +136,9 @@ bool input_init(InputDev *in) {
     return false;
   in->count = 0;
   in->shift = in->ctrl = in->alt = in->capslock = false;
+  in->rescan_at_ms = 0;
 
-  /* Initialize inotify FIRST for fastest detection */
+  /* Set up inotify BEFORE readdir so no IN_CREATE events are missed */
   in->inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
   if (in->inotify_fd >= 0) {
     in->watch_fd =
@@ -127,8 +161,51 @@ bool input_init(InputDev *in) {
     }
   }
   closedir(dir);
+
+  /*
+   * Schedule a deferred re-scan 2 seconds after init.
+   *
+   * USB keyboards attached at boot may not have their evdev nodes in
+   * /dev/input until after the kernel finishes USB enumeration, which
+   * often races with the readdir above.  inotify IN_CREATE only fires
+   * for nodes created after the watch is registered, so nodes that appear
+   * in this window are caught automatically.  The re-scan is a safety net
+   * for nodes that appear in the window between process start and inotify
+   * watch registration, or on platforms where uevents are delayed.
+   *
+   * input_rescan() uses dedup in input_add_device so double-registration
+   * is impossible.
+   */
+  in->rescan_at_ms = mono_ms() + 2000;
+
   return true;
 }
+
+/*
+ * Full re-scan of /dev/input.  Safe to call at any time; dedup in
+ * input_add_device prevents double-registration.  Called from the main
+ * loop when rescan_at_ms is reached, and can also be triggered manually.
+ */
+void input_rescan(InputDev *in) {
+  if (!in)
+    return;
+  in->rescan_at_ms = 0;
+
+  DIR *dir = opendir("/dev/input");
+  if (!dir)
+    return;
+
+  struct dirent *de;
+  while ((de = readdir(dir))) {
+    if (strncmp(de->d_name, "event", 5) == 0) {
+      char path[PATH_MAX];
+      snprintf(path, sizeof(path), "/dev/input/%s", de->d_name);
+      input_add_device(in, path);
+    }
+  }
+  closedir(dir);
+}
+
 
 void input_handle_hotplug(InputDev *in) {
   uint8_t buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
